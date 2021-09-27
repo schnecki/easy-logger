@@ -1,3 +1,5 @@
 .stack-work/
 *~
 /easy-logger.cabal
+/TAGS
+/stack.yaml.lock

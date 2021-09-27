@@ -3,6 +3,7 @@
 module Logging.Logger
     ( LogDestination (..)
     , LogLevel (..)
+    , initLogger
     , setLoggingDestination
     , setMinLogLevel
     , logDebug
@@ -16,9 +17,11 @@ module Logging.Logger
     , finalizeLogger
     ) where
 
-import           Control.Monad              (when)
+import           Control.Applicative        ((<|>))
+import           Control.Monad              (void, when)
 import qualified Data.ByteString.Char8      as S8
 import           Data.IORef
+import qualified Data.Map.Strict            as M
 import qualified Data.Text                  as T
 import           Language.Haskell.TH.Syntax as TH
 import           System.IO
@@ -31,7 +34,7 @@ import           Logging.Push
 import           System.IO.Unsafe           (unsafePerformIO)
 
 finalizeLogger :: IO ()
-finalizeLogger = readIORef loggerSet >>= rmLoggerSet
+finalizeLogger = readIORef loggerSets >>= mapM_ rmLoggerSet
 
 -- | Logging destination. See also `setLoggingDestination`.
 data LogDestination
@@ -39,25 +42,44 @@ data LogDestination
   | LogStdOut
   | LogFile FilePath
 
+-- | Log messages from other packages that use this library too, even if they did not call @initLogger@?
+type LogFromAllPackages = Bool
+
+-- | Initialise the logger. MUST only be called in the executable code (not the exposed library code)! Takes a `Bool` that decides wether to log messages from other packages that use the same library
+-- and did not initalize the Logger (which should be the case for all of them!).
+initLogger :: Q Exp
+initLogger = [|\logAll -> setLoggingDestination $(qLocation >>= liftLoc) logAll |]
+
+
 -- | Set the destination for all consequitive for logging. You should only set this once, at the beginning of the program! The default is `LogStdOut`.
-setLoggingDestination :: LogDestination -> IO ()
-setLoggingDestination LogStdErr    = newStderrLoggerSet defaultBufSize >>= setLoggerSet
-setLoggingDestination LogStdOut    = newStdoutLoggerSet defaultBufSize >>= setLoggerSet
-setLoggingDestination (LogFile fp) = newFileLoggerSet defaultBufSize fp >>= setLoggerSet
+setLoggingDestination :: Loc -> LogFromAllPackages -> LogDestination -> IO ()
+setLoggingDestination loc logAll LogStdErr = newStderrLoggerSet defaultBufSize >>= setLoggerSet (loc_package loc) >> setAllPackagesLogger logAll LogStdErr
+setLoggingDestination loc logAll LogStdOut = newStdoutLoggerSet defaultBufSize >>= setLoggerSet (loc_package loc) >> setAllPackagesLogger logAll LogStdOut
+setLoggingDestination loc logAll (LogFile fp) = newFileLoggerSet defaultBufSize fp >>= setLoggerSet (loc_package loc) >> setAllPackagesLogger logAll (LogFile fp)
+
+defaultLogPkgName :: String
+defaultLogPkgName = "__default__"
+
+setAllPackagesLogger :: Bool -> LogDestination -> IO ()
+setAllPackagesLogger False _ = return ()
+setAllPackagesLogger True LogStdErr = newStderrLoggerSet defaultBufSize >>= setLoggerSet defaultLogPkgName
+setAllPackagesLogger True LogStdOut = newStdoutLoggerSet defaultBufSize >>= setLoggerSet defaultLogPkgName
+setAllPackagesLogger True (LogFile fp) = newFileLoggerSet defaultBufSize fp >>= setLoggerSet defaultLogPkgName
 
 -- | The default buffer size (4,096 bytes).
 defaultBufSize :: BufSize
 defaultBufSize = 4096
 
-setLoggerSet :: LoggerSet -> IO ()
-setLoggerSet set = writeIORef loggerSet set
+setLoggerSet :: String -> LoggerSet -> IO ()
+setLoggerSet pkgName set = modifyIORef' loggerSets (M.insert pkgName set)
 
-loggerSet :: IORef LoggerSet
-loggerSet = unsafePerformIO $ newStdoutLoggerSet defaultBufSize >>= newIORef
-{-# NOINLINE loggerSet  #-}
+-- | Set of loggers for each package
+loggerSets :: IORef (M.Map String LoggerSet)
+loggerSets = unsafePerformIO $ newIORef mempty
+{-# NOINLINE loggerSets  #-}
 
 
--- | Log Level. Levels are sorted.
+-- | Log Level. Levels are sorted. Debug < Info < Warning < Error. None disables all logging. Default: Debug
 data LogLevel
   = None
   | Debug
@@ -77,11 +99,17 @@ logLevelText Error   = "ERROR"
 -- | Generic log function. Use TH version, e.g. `logDebug`.
 logFun :: (ToLogStr msg) => Loc -> LogLevel -> msg -> IO ()
 logFun _ None _ = return ()
-logFun loc level msg = do
+logFun loc@(Loc _ pkg _ _ _) level msg = do
   minLevel <- readIORef minLogLevel
   when (level >= minLevel) $ do
     now <- readIORef cachedTime >>= \ch -> ch
-    readIORef loggerSet >>= \set -> pushLogStr set (defaultLogStr loc now level (toLogStr msg))
+    readIORef loggerSets >>= \sets ->
+      case getLogger sets of
+        Nothing | M.null sets -> error "You must call `initLogger` at the start of your application! See `Logging.Logger`."
+        Nothing  -> return ()
+        Just set -> pushLogStr set (defaultLogStr loc now level (toLogStr msg))
+  where
+    getLogger sets = M.lookup pkg sets <|> M.lookup defaultLogPkgName sets
 
 
 cachedTime :: IORef (IO FormattedTime)
@@ -91,10 +119,10 @@ cachedTime = unsafePerformIO $ do
 
 
 minLogLevel :: IORef LogLevel
-minLogLevel = unsafePerformIO $ newIORef None
+minLogLevel = unsafePerformIO $ newIORef Debug
 {-# NOINLINE minLogLevel  #-}
 
--- | Set the least logging level. Levels lower will not be logged. Log Level Order: `None` < `Debug` < `Info` < `Warning` < `Error`. Note that the output to stderr using e.g. `logPrintError` will not
+-- | Set the least logging level. Levels lower will not be logged. Log Level Order: `Debug` < `Info` < `Warning` < `Error`. `None` disables all logging. Note that the output to stderr using e.g. `logPrintError` will not
 -- be affected!
 setMinLogLevel :: LogLevel -> IO ()
 setMinLogLevel = writeIORef minLogLevel
