@@ -44,3 +44,6 @@ tests:
     - -with-rtsopts=-N
     dependencies:
     - easy-logger
+    - QuickCheck
+    - quickcheck-assertions
+    - hspec

@@ -4,8 +4,11 @@ module Logging.Logger
     ( LogDestination (..)
     , LogLevel (..)
     , initLogger
+    , initLoggerAllPackages
     , setLoggingDestination
     , setMinLogLevel
+    , logAll
+    , logPrintAll
     , logDebug
     , logPrintDebug
     , logInfo
@@ -14,11 +17,12 @@ module Logging.Logger
     , logPrintWarning
     , logError
     , logPrintError
+    , finalizeAllLoggers
     , finalizeLogger
     ) where
 
 import           Control.Applicative        ((<|>))
-import           Control.Monad              (void, when)
+import           Control.Monad              (when)
 import qualified Data.ByteString.Char8      as S8
 import           Data.IORef
 import qualified Data.Map.Strict            as M
@@ -33,8 +37,23 @@ import           Logging.Push
 
 import           System.IO.Unsafe           (unsafePerformIO)
 
-finalizeLogger :: IO ()
-finalizeLogger = readIORef loggerSets >>= mapM_ rmLoggerSet
+
+-- | Should be used to ensure all logs are completely written before the program exists. Cleans all the file descriptors. You (and also no other library) MUST NOT log after this command.
+finalizeAllLoggers :: IO ()
+finalizeAllLoggers = readIORef loggerSets >>= mapM_ rmLoggerSet >> writeIORef loggerSets mempty
+
+-- | Can be used to destroy your own logger (from your package) only. You MUST NOT log after this command.
+finalizeLogger :: Q Exp
+finalizeLogger = [| closeLogger $(qLocation >>= liftLoc)|]
+
+-- | Close logger of given package.
+closeLogger :: Loc -> IO ()
+closeLogger (Loc _ pkgName _ _ _) = do
+  refs <- readIORef loggerSets
+  case M.lookup pkgName refs of
+    Nothing  -> return ()
+    Just set -> rmLoggerSet set
+
 
 -- | Logging destination. See also `setLoggingDestination`.
 data LogDestination
@@ -47,24 +66,22 @@ type LogFromAllPackages = Bool
 
 -- | Initialise the logger. MUST only be called in the executable code (not the exposed library code)! Takes a `Bool` that decides wether to log messages from other packages that use the same library
 -- and did not initalize the Logger (which should be the case for all of them!).
+initLoggerAllPackages :: Q Exp
+initLoggerAllPackages = [| \dest logLevel logAllPkgs -> setMinLogLevel logLevel >> setLoggingDestination  (loc_package $(qLocation >>= liftLoc)) dest logAllPkgs |]
+
+-- | Initialise the logger. MUST only be called in the executable code (not the exposed library code)! Ignores the other packages logs, if the same packages is used for logging.
 initLogger :: Q Exp
-initLogger = [|\logAll -> setLoggingDestination $(qLocation >>= liftLoc) logAll |]
+initLogger = [| \dest logLevel -> setMinLogLevel logLevel >> setLoggingDestination (loc_package $(qLocation >>= liftLoc)) dest False |]
 
 
 -- | Set the destination for all consequitive for logging. You should only set this once, at the beginning of the program! The default is `LogStdOut`.
-setLoggingDestination :: Loc -> LogFromAllPackages -> LogDestination -> IO ()
-setLoggingDestination loc logAll LogStdErr = newStderrLoggerSet defaultBufSize >>= setLoggerSet (loc_package loc) >> setAllPackagesLogger logAll LogStdErr
-setLoggingDestination loc logAll LogStdOut = newStdoutLoggerSet defaultBufSize >>= setLoggerSet (loc_package loc) >> setAllPackagesLogger logAll LogStdOut
-setLoggingDestination loc logAll (LogFile fp) = newFileLoggerSet defaultBufSize fp >>= setLoggerSet (loc_package loc) >> setAllPackagesLogger logAll (LogFile fp)
+setLoggingDestination :: String -> LogDestination -> LogFromAllPackages -> IO ()
+setLoggingDestination pkgName LogStdErr logAllPkgs = newStderrLoggerSet defaultBufSize >>= setLoggerSet pkgName >>     when logAllPkgs (setLoggingDestination defaultLogPkgName LogStdErr False)
+setLoggingDestination pkgName LogStdOut logAllPkgs = newStdoutLoggerSet defaultBufSize >>= setLoggerSet pkgName >>     when logAllPkgs (setLoggingDestination defaultLogPkgName LogStdOut False)
+setLoggingDestination pkgName (LogFile fp) logAllPkgs = newFileLoggerSet defaultBufSize fp >>= setLoggerSet pkgName >> when logAllPkgs (setLoggingDestination defaultLogPkgName (LogFile fp) False)
 
 defaultLogPkgName :: String
 defaultLogPkgName = "__default__"
-
-setAllPackagesLogger :: Bool -> LogDestination -> IO ()
-setAllPackagesLogger False _ = return ()
-setAllPackagesLogger True LogStdErr = newStderrLoggerSet defaultBufSize >>= setLoggerSet defaultLogPkgName
-setAllPackagesLogger True LogStdOut = newStdoutLoggerSet defaultBufSize >>= setLoggerSet defaultLogPkgName
-setAllPackagesLogger True (LogFile fp) = newFileLoggerSet defaultBufSize fp >>= setLoggerSet defaultLogPkgName
 
 -- | The default buffer size (4,096 bytes).
 defaultBufSize :: BufSize
@@ -79,26 +96,28 @@ loggerSets = unsafePerformIO $ newIORef mempty
 {-# NOINLINE loggerSets  #-}
 
 
--- | Log Level. Levels are sorted. Debug < Info < Warning < Error. None disables all logging. Default: Debug
+-- | Log Level. Levels are sorted. All < Debug < Info < Warning < Error. None disables all logging. Default: All
 data LogLevel
-  = None
-  | Debug
-  | Info
-  | Warning
-  | Error
+  = LogNone
+  | LogAll
+  | LogDebug
+  | LogInfo
+  | LogWarning
+  | LogError
   deriving (Show, Eq, Ord)
 
 -- | Log level text.
 logLevelText :: LogLevel -> T.Text
-logLevelText None    = mempty
-logLevelText Debug   = "DEBUG"
-logLevelText Info    = "INFO "
-logLevelText Warning = "WARN "
-logLevelText Error   = "ERROR"
+logLevelText LogNone    = mempty
+logLevelText LogAll     = "ALL"
+logLevelText LogDebug   = "DEBUG"
+logLevelText LogInfo    = "INFO "
+logLevelText LogWarning = "WARN "
+logLevelText LogError   = "ERROR"
 
 -- | Generic log function. Use TH version, e.g. `logDebug`.
 logFun :: (ToLogStr msg) => Loc -> LogLevel -> msg -> IO ()
-logFun _ None _ = return ()
+logFun _ LogNone _ = return ()
 logFun loc@(Loc _ pkg _ _ _) level msg = do
   minLevel <- readIORef minLogLevel
   when (level >= minLevel) $ do
@@ -119,7 +138,7 @@ cachedTime = unsafePerformIO $ do
 
 
 minLogLevel :: IORef LogLevel
-minLogLevel = unsafePerformIO $ newIORef Debug
+minLogLevel = unsafePerformIO $ newIORef LogAll
 {-# NOINLINE minLogLevel  #-}
 
 -- | Set the least logging level. Levels lower will not be logged. Log Level Order: `Debug` < `Info` < `Warning` < `Error`. `None` disables all logging. Note that the output to stderr using e.g. `logPrintError` will not
@@ -128,49 +147,60 @@ setMinLogLevel :: LogLevel -> IO ()
 setMinLogLevel = writeIORef minLogLevel
 
 
+-- | Generates a function that takes a 'Text' and logs a 'LevelAll' message. Usage:
+--
+-- > $(logAll) "This is a debug log message"
+logAll :: Q Exp
+logAll = [| logFun $(qLocation >>= liftLoc) LogAll |]
+
+-- | Same as `logAll`, but also prints the message on `stderr`.
+logPrintAll :: Q Exp
+logPrintAll = [| \txt -> hPutStrLn stderr ("DEBUG: " ++ T.unpack txt) >> hFlush stderr >> logFun $(qLocation >>= liftLoc) LogAll txt |]
+
+
 -- | Generates a function that takes a 'Text' and logs a 'LevelDebug' message. Usage:
 --
 -- > $(logDebug) "This is a debug log message"
 logDebug :: Q Exp
-logDebug = [| logFun $(qLocation >>= liftLoc) Debug |]
+logDebug = [| logFun $(qLocation >>= liftLoc) LogDebug |]
 
 -- | Same as `logDebug`, but also prints the message on `stderr`.
 logPrintDebug :: Q Exp
-logPrintDebug = [| \txt -> hPutStrLn stderr ("DEBUG: " ++ T.unpack txt) >> hFlush stderr >> logFun $(qLocation >>= liftLoc) Debug txt |]
+logPrintDebug = [| \txt -> hPutStrLn stderr ("DEBUG: " ++ T.unpack txt) >> hFlush stderr >> logFun $(qLocation >>= liftLoc) LogDebug txt |]
 
 
 -- | Generates a function that takes a 'Text' and logs a 'LevelInfo' message. Usage:
 --
 -- > $(logInfo) "This is a info log message"
 logInfo :: Q Exp
-logInfo = [| logFun $(qLocation >>= liftLoc) Info |]
+logInfo = [| logFun $(qLocation >>= liftLoc) LogInfo |]
 
 -- | Same as `logInfo`, but also prints the message on `stderr`.
 logPrintInfo :: Q Exp
-logPrintInfo = [| \txt -> hPutStrLn stderr ("INFO: " ++ T.unpack txt) >> hFlush stderr >> logFun $(qLocation >>= liftLoc) Info txt |]
+logPrintInfo = [| \txt -> hPutStrLn stderr ("INFO: " ++ T.unpack txt) >> hFlush stderr >> logFun $(qLocation >>= liftLoc) LogInfo txt |]
 
 
 -- | Generates a function that takes a 'Text' and logs a 'LevelWarning' message. Usage:
 --
 -- > $(logWarning) "This is a warning log message"
 logWarning :: Q Exp
-logWarning = [| logFun $(qLocation >>= liftLoc) Warning |]
+logWarning = [| logFun $(qLocation >>= liftLoc) LogWarning |]
 
 
 -- | Same as `logWarning`, but also prints the message on `stderr`.
 logPrintWarning :: Q Exp
-logPrintWarning = [| \txt -> hPutStrLn stderr ("WARNING: " ++ T.unpack txt) >> hFlush stderr >> logFun $(qLocation >>= liftLoc) Warning txt |]
+logPrintWarning = [| \txt -> hPutStrLn stderr ("WARNING: " ++ T.unpack txt) >> hFlush stderr >> logFun $(qLocation >>= liftLoc) LogWarning txt |]
 
 
 -- | Generates a function that takes a 'Text' and logs a 'LevelError' message. Usage:
 --
 -- > $(logError) "This is a error log message"
 logError :: Q Exp
-logError = [| logFun $(qLocation >>= liftLoc) Error |]
+logError = [| logFun $(qLocation >>= liftLoc) LogError |]
 
 -- | Same as `logError`, but also prints the message on stderr.
 logPrintError :: Q Exp
-logPrintError = [| \txt -> hPutStrLn stderr ("ERROR: " ++ T.unpack txt) >> hFlush stderr >> logFun $(qLocation >>= liftLoc) Error txt |]
+logPrintError = [| \txt -> hPutStrLn stderr ("ERROR: " ++ T.unpack txt) >> hFlush stderr >> logFun $(qLocation >>= liftLoc) LogError txt |]
 
 
 ---- Helpers:
