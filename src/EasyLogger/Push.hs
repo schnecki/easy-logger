@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Logging.Push
+module EasyLogger.Push
     ( pushLogStr
     , pushLogStrLn
     ) where
@@ -13,8 +13,8 @@ import           Data.IORef
 import           Foreign.Marshal.Alloc (allocaBytes)
 import           GHC.IO.FD
 
-import           Logging.LoggerSet
-import           Logging.LogStr
+import           EasyLogger.LoggerSet
+import           EasyLogger.LogStr
 
 
 -- | Writing a log message to the corresponding buffer.

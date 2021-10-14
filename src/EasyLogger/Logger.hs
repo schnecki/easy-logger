@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell   #-}
-module Logging.Logger
+module EasyLogger.Logger
     ( LogDestination (..)
     , LogLevel (..)
     , initLogger
@@ -19,40 +19,76 @@ module Logging.Logger
     , logPrintError
     , finalizeAllLoggers
     , finalizeLogger
+    , flushLoggers
     ) where
 
 import           Control.Applicative        ((<|>))
 import           Control.Monad              (when)
 import qualified Data.ByteString.Char8      as S8
 import           Data.IORef
+import           Data.List                  (find)
 import qualified Data.Map.Strict            as M
 import qualified Data.Text                  as T
 import           Language.Haskell.TH.Syntax as TH
 import           System.IO
 
-import           Logging.Date
-import           Logging.LoggerSet
-import           Logging.LogStr
-import           Logging.Push
+import           EasyLogger.Date
+import           EasyLogger.LoggerSet
+import           EasyLogger.LogStr
+import           EasyLogger.Push
 
 import           System.IO.Unsafe           (unsafePerformIO)
 
+-- | Add a @LoggerSet@ to the known loggers.
+setLoggerSet :: String -> LoggerSet -> IO ()
+setLoggerSet pkgName set = modifyIORef' loggerSets (M.insert pkgName set)
 
--- | Should be used to ensure all logs are completely written before the program exists. Cleans all the file descriptors. You (and also no other library) MUST NOT log after this command.
+
+-- | Set of loggers. We have one @LoggerSet@ for each package.
+loggerSets :: IORef (M.Map String LoggerSet)
+loggerSets = unsafePerformIO $ newIORef mempty
+{-# NOINLINE loggerSets  #-}
+
+
+-- | Should be used to ensure all logs are completely written before the program exists. Cleans all the file descriptors. You (and also no other library) MUST NOT log after this command as all loggers
+-- are deinitalized. However, you might initialize the loggers again and before restarting to log.
 finalizeAllLoggers :: IO ()
-finalizeAllLoggers = readIORef loggerSets >>= mapM_ rmLoggerSet >> writeIORef loggerSets mempty
+finalizeAllLoggers = do
+  pkgs <- map fst . M.toList <$> readIORef loggerSets
+  mapM_ closeLoggerPkg pkgs
+
 
 -- | Can be used to destroy your own logger (from your package) only. You MUST NOT log after this command.
 finalizeLogger :: Q Exp
 finalizeLogger = [| closeLogger $(qLocation >>= liftLoc)|]
 
--- | Close logger of given package.
+
+-- | Flush all loggers of all packages.
+flushLoggers :: IO ()
+flushLoggers = readIORef loggerSets >>= mapM_ flushLoggerSet
+
+
+-- | Close logger of calling package.
 closeLogger :: Loc -> IO ()
-closeLogger (Loc _ pkgName _ _ _) = do
+closeLogger (Loc _ pkgName _ _ _) = closeLoggerPkg pkgName
+
+-- | Close logger of package with provided package name.
+closeLoggerPkg :: String -> IO ()
+closeLoggerPkg pkgName = do
   refs <- readIORef loggerSets
   case M.lookup pkgName refs of
-    Nothing  -> return ()
-    Just set -> rmLoggerSet set
+    Nothing -> return ()
+    Just set@(LoggerSet Nothing _ _ _) -> deletePackage pkgName >> rmLoggerSet set
+    Just set@(LoggerSet justFp _ _ _) -> do
+      deletePackage pkgName
+      let nrFD = length $ filter (\(LoggerSet mFp _ _ _) -> mFp == justFp) (M.elems refs)
+      if nrFD <= 1
+        then rmLoggerSet set
+        else flushLoggerSet set
+
+-- | Delete a package from the logger sets and with this disable all logging. Ensure the LoggerSet is deleted in case this is the last FD before calling this function!
+deletePackage :: String -> IO ()
+deletePackage pkg = modifyIORef' loggerSets (M.delete pkg)
 
 
 -- | Logging destination. See also `setLoggingDestination`.
@@ -67,18 +103,30 @@ type LogFromAllPackages = Bool
 -- | Initialise the logger. MUST only be called in the executable code (not the exposed library code)! Takes a `Bool` that decides wether to log messages from other packages that use the same library
 -- and did not initalize the Logger (which should be the case for all of them!).
 initLoggerAllPackages :: Q Exp
-initLoggerAllPackages = [| \dest logLevel logAllPkgs -> setMinLogLevel logLevel >> setLoggingDestination  (loc_package $(qLocation >>= liftLoc)) dest logAllPkgs |]
+initLoggerAllPackages = [| \dest logLevel logAllPkgs -> setMinLogLevel logLevel >> setLoggingDestination (loc_package $(qLocation >>= liftLoc)) dest logAllPkgs |]
 
 -- | Initialise the logger. MUST only be called in the executable code (not the exposed library code)! Ignores the other packages logs, if the same packages is used for logging.
 initLogger :: Q Exp
 initLogger = [| \dest logLevel -> setMinLogLevel logLevel >> setLoggingDestination (loc_package $(qLocation >>= liftLoc)) dest False |]
 
-
 -- | Set the destination for all consequitive for logging. You should only set this once, at the beginning of the program! The default is `LogStdOut`.
 setLoggingDestination :: String -> LogDestination -> LogFromAllPackages -> IO ()
-setLoggingDestination pkgName LogStdErr logAllPkgs = newStderrLoggerSet defaultBufSize >>= setLoggerSet pkgName >>     when logAllPkgs (setLoggingDestination defaultLogPkgName LogStdErr False)
-setLoggingDestination pkgName LogStdOut logAllPkgs = newStdoutLoggerSet defaultBufSize >>= setLoggerSet pkgName >>     when logAllPkgs (setLoggingDestination defaultLogPkgName LogStdOut False)
-setLoggingDestination pkgName (LogFile fp) logAllPkgs = newFileLoggerSet defaultBufSize fp >>= setLoggerSet pkgName >> when logAllPkgs (setLoggingDestination defaultLogPkgName (LogFile fp) False)
+setLoggingDestination pkgName LogStdErr logAllPkgs    = newStderrLoggerSet defaultBufSize  >>= \ls -> setLoggerSet pkgName ls >> when logAllPkgs (setLoggingDestinationAllPkgs ls defaultLogPkgName LogStdErr)
+setLoggingDestination pkgName LogStdOut logAllPkgs    = newStdoutLoggerSet defaultBufSize  >>= \ls -> setLoggerSet pkgName ls >> when logAllPkgs (setLoggingDestinationAllPkgs ls defaultLogPkgName LogStdOut)
+setLoggingDestination pkgName (LogFile fp) logAllPkgs = do
+  allLs <- M.elems <$> readIORef loggerSets
+  ls <-
+    case find (\(LoggerSet mFp _ _ _) -> mFp == Just fp) allLs of
+      Nothing     -> newFileLoggerSet defaultBufSize fp
+      Just lsFile -> newFileLoggerSetSameFile defaultBufSize lsFile
+  setLoggerSet pkgName ls >> when logAllPkgs (setLoggingDestinationAllPkgs ls defaultLogPkgName (LogFile fp))
+
+
+setLoggingDestinationAllPkgs :: LoggerSet -> String -> LogDestination -> IO ()
+setLoggingDestinationAllPkgs _ pkgName LogStdErr  = newStderrLoggerSet defaultBufSize          >>= setLoggerSet pkgName
+setLoggingDestinationAllPkgs _ pkgName LogStdOut  = newStdoutLoggerSet defaultBufSize          >>= setLoggerSet pkgName
+setLoggingDestinationAllPkgs ls pkgName LogFile{} = newFileLoggerSetSameFile defaultBufSize ls >>= setLoggerSet pkgName
+
 
 defaultLogPkgName :: String
 defaultLogPkgName = "__default__"
@@ -87,16 +135,8 @@ defaultLogPkgName = "__default__"
 defaultBufSize :: BufSize
 defaultBufSize = 4096
 
-setLoggerSet :: String -> LoggerSet -> IO ()
-setLoggerSet pkgName set = modifyIORef' loggerSets (M.insert pkgName set)
 
--- | Set of loggers for each package
-loggerSets :: IORef (M.Map String LoggerSet)
-loggerSets = unsafePerformIO $ newIORef mempty
-{-# NOINLINE loggerSets  #-}
-
-
--- | Log Level. Levels are sorted. All < Debug < Info < Warning < Error. None disables all logging. Default: All
+-- | Log Level. Levels are sorted. `All` < `Debug` < `Info` < `Warning` < `Error`. None disables all logging. Default: All
 data LogLevel
   = LogNone
   | LogAll
@@ -106,7 +146,7 @@ data LogLevel
   | LogError
   deriving (Show, Eq, Ord)
 
--- | Log level text.
+-- | Log level text. Make sure you call @initLogger@, or logging will be disabled.
 logLevelText :: LogLevel -> T.Text
 logLevelText LogNone    = mempty
 logLevelText LogAll     = "ALL"
@@ -124,7 +164,7 @@ logFun loc@(Loc _ pkg _ _ _) level msg = do
     now <- readIORef cachedTime >>= \ch -> ch
     readIORef loggerSets >>= \sets ->
       case getLogger sets of
-        Nothing | M.null sets -> error "You must call `initLogger` at the start of your application! See `Logging.Logger`."
+        -- Nothing | M.null sets -> error "You must call `initLogger` at the start of your application! See the documentation of `EasyLogger.Logger`."
         Nothing  -> return ()
         Just set -> pushLogStr set (defaultLogStr loc now level (toLogStr msg))
   where
@@ -153,9 +193,9 @@ setMinLogLevel = writeIORef minLogLevel
 logAll :: Q Exp
 logAll = [| logFun $(qLocation >>= liftLoc) LogAll |]
 
--- | Same as `logAll`, but also prints the message on `stderr`.
+-- | Same as `logAll`, but also prints the message on `stdout`.
 logPrintAll :: Q Exp
-logPrintAll = [| \txt -> hPutStrLn stderr ("DEBUG: " ++ T.unpack txt) >> hFlush stderr >> logFun $(qLocation >>= liftLoc) LogAll txt |]
+logPrintAll = [| \txt -> hPutStrLn stdout ("DEBUG: " ++ T.unpack txt) >> hFlush stdout >> logFun $(qLocation >>= liftLoc) LogAll txt |]
 
 
 -- | Generates a function that takes a 'Text' and logs a 'LevelDebug' message. Usage:
@@ -164,9 +204,9 @@ logPrintAll = [| \txt -> hPutStrLn stderr ("DEBUG: " ++ T.unpack txt) >> hFlush 
 logDebug :: Q Exp
 logDebug = [| logFun $(qLocation >>= liftLoc) LogDebug |]
 
--- | Same as `logDebug`, but also prints the message on `stderr`.
+-- | Same as `logDebug`, but also prints the message on `stdout`.
 logPrintDebug :: Q Exp
-logPrintDebug = [| \txt -> hPutStrLn stderr ("DEBUG: " ++ T.unpack txt) >> hFlush stderr >> logFun $(qLocation >>= liftLoc) LogDebug txt |]
+logPrintDebug = [| \txt -> hPutStrLn stdout ("DEBUG: " ++ T.unpack txt) >> hFlush stdout >> logFun $(qLocation >>= liftLoc) LogDebug txt |]
 
 
 -- | Generates a function that takes a 'Text' and logs a 'LevelInfo' message. Usage:
@@ -175,9 +215,9 @@ logPrintDebug = [| \txt -> hPutStrLn stderr ("DEBUG: " ++ T.unpack txt) >> hFlus
 logInfo :: Q Exp
 logInfo = [| logFun $(qLocation >>= liftLoc) LogInfo |]
 
--- | Same as `logInfo`, but also prints the message on `stderr`.
+-- | Same as `logInfo`, but also prints the message on `stdout`.
 logPrintInfo :: Q Exp
-logPrintInfo = [| \txt -> hPutStrLn stderr ("INFO: " ++ T.unpack txt) >> hFlush stderr >> logFun $(qLocation >>= liftLoc) LogInfo txt |]
+logPrintInfo = [| \txt -> hPutStrLn stdout ("INFO: " ++ T.unpack txt) >> hFlush stdout >> logFun $(qLocation >>= liftLoc) LogInfo txt |]
 
 
 -- | Generates a function that takes a 'Text' and logs a 'LevelWarning' message. Usage:
@@ -187,9 +227,9 @@ logWarning :: Q Exp
 logWarning = [| logFun $(qLocation >>= liftLoc) LogWarning |]
 
 
--- | Same as `logWarning`, but also prints the message on `stderr`.
+-- | Same as `logWarning`, but also prints the message on `stdout`.
 logPrintWarning :: Q Exp
-logPrintWarning = [| \txt -> hPutStrLn stderr ("WARNING: " ++ T.unpack txt) >> hFlush stderr >> logFun $(qLocation >>= liftLoc) LogWarning txt |]
+logPrintWarning = [| \txt -> hPutStrLn stdout ("WARNING: " ++ T.unpack txt) >> hFlush stdout >> logFun $(qLocation >>= liftLoc) LogWarning txt |]
 
 
 -- | Generates a function that takes a 'Text' and logs a 'LevelError' message. Usage:
@@ -198,7 +238,7 @@ logPrintWarning = [| \txt -> hPutStrLn stderr ("WARNING: " ++ T.unpack txt) >> h
 logError :: Q Exp
 logError = [| logFun $(qLocation >>= liftLoc) LogError |]
 
--- | Same as `logError`, but also prints the message on stderr.
+-- | Same as `logError`, but also prints the message on `stderr`.
 logPrintError :: Q Exp
 logPrintError = [| \txt -> hPutStrLn stderr ("ERROR: " ++ T.unpack txt) >> hFlush stderr >> logFun $(qLocation >>= liftLoc) LogError txt |]
 

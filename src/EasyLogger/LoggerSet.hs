@@ -1,9 +1,10 @@
 {-# LANGUAGE BangPatterns #-}
-module Logging.LoggerSet
+module EasyLogger.LoggerSet
   ( Logger(..)
   , LoggerSet(..)
   , BufSize
   , newFileLoggerSet
+  , newFileLoggerSetSameFile
   , newStdoutLoggerSet
   , newStderrLoggerSet
   , newFDLoggerSet
@@ -12,9 +13,10 @@ module Logging.LoggerSet
   , writeLogStr
   , flushLog
   , rmLoggerSet
+  , flushLoggerSet
   ) where
 
-import           Control.Concurrent            (MVar, getNumCapabilities)
+import           Control.Concurrent            (getNumCapabilities)
 import           Control.Concurrent.MVar
 import           Control.Debounce              (debounceAction, defaultDebounceSettings,
                                                 mkDebounce)
@@ -31,12 +33,11 @@ import           Foreign.ForeignPtr            (withForeignPtr)
 import           Foreign.Marshal.Alloc         (free, mallocBytes)
 import           Foreign.Ptr                   (Ptr, plusPtr)
 import           GHC.IO.Device                 (close)
-import           GHC.IO.FD                     (openFile, stderr, stdout,
+import           GHC.IO.FD                     (FD, openFile, stderr, stdout,
                                                 writeRawBufferPtr)
-import           GHC.IO.FD
 import           GHC.IO.IOMode                 (IOMode (..))
 
-import           Logging.LogStr
+import           EasyLogger.LogStr
 
 -- | The type for buffer size of each core.
 type BufSize = Int
@@ -58,6 +59,10 @@ newFileLoggerSet :: BufSize -> FilePath -> IO LoggerSet
 newFileLoggerSet size file = openFileFD >>= newFDLoggerSet size (Just file)
   where
     openFileFD = fst <$> openFile file AppendMode False
+
+-- | Creating a new 'LoggerSet' using a file.
+newFileLoggerSetSameFile :: BufSize -> LoggerSet -> IO LoggerSet
+newFileLoggerSetSameFile size (LoggerSet mFp ioRefFD _ _) = readIORef ioRefFD >>= newFDLoggerSet size mFp
 
 
 -- | Creating a new 'LoggerSet' using stdout.
@@ -141,6 +146,15 @@ toBufIOWith buf !size io builder = loop $ BBE.runBuilder builder
              Chunk (PS fptr off siz) writer' ->
                withForeignPtr fptr $ \ptr -> io (ptr `plusPtr` off) siz >> loop writer'
 
+-- | Flushing the buffers.
+flushLoggerSet :: LoggerSet -> IO ()
+flushLoggerSet (LoggerSet _ fdref arr _) = do
+    let (l,u) = bounds arr
+    let nums = [l .. u]
+    mapM_ flushIt nums
+  where
+    flushIt i = flushLog fdref (arr ! i)
+
 
 -- | Flushing the buffers, closing the internal file information
 --   and freeing the buffers.
@@ -157,4 +171,3 @@ rmLoggerSet (LoggerSet mfile fdref arr _) = do
     freeIt i = do
         let (Logger _ mbuf _) = arr ! i
         takeMVar mbuf >>= free
-

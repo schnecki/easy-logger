@@ -1,7 +1,7 @@
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE OverloadedStrings    #-}
 {-# LANGUAGE TypeSynonymInstances #-}
-module Logging.LogStr
+module EasyLogger.LogStr
     ( LogStr (..)
     , ToLogStr (..)
     , logStrLen

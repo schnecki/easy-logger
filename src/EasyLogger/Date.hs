@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Logging.Date
+module EasyLogger.Date
     ( FormattedTime
     , TimeFormat
     , newTimeCache
