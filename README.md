@@ -1,7 +1,8 @@
 # Easy Logging for Haskell
 
 Easy-logger can be used to easily create logs, without handling any Monad. Just log as you go. The
-package provides logging for code that lives in the `IO` Monad, as well as for pure code.
+package provides logging for code that lives in the `IO` Monad, implements `MonadIO m`, as well as
+for pure code.
 
 ## Usage
 
@@ -56,7 +57,7 @@ The available log levels are:
       | LogError
       deriving (Show, Read, Bounded, Enum, Eq, Ord)
 
-The logger can be used to log to @stderr@, @stdout@ or a file:
+The logger can be used to log to `stderr`, `stdout` or a file:
 
     -- | Logging destination. See also `setLoggingDestination`.
     data LogDestination
@@ -73,16 +74,16 @@ Template-Haskell code ensures that your package name is provided to the logger, 
 
     {-# LANGUAGE TemplateHaskell #-}
     module My.Great.Package.Logging
-        ( enableRequestLogging
-        , disableRequestLogging
+        ( enableMyGreatPackageLogging
+        , disableMyGreatPackageLogging
         ) where
 
     import           EasyLogger
 
-    enableRequestLogging :: LogDestination -> LogLevel -> IO ()
-    enableRequestLogging = $(initLogger)
+    enableMyGreatPackageLogging :: LogDestination -> LogLevel -> IO ()
+    enableMyGreatPackageLogging = $(initLogger)
 
-    disableRequestLogging :: IO ()
-    disableRequestLogging = $(finalizeLogger)
+    disableMyGreatPackageLogging :: IO ()
+    disableMyGreatPackageLogging = $(finalizeLogger)
 
 
