@@ -17,13 +17,24 @@ module EasyLogger.Logger
     , logPrintWarning
     , logError
     , logPrintError
+    , pureLogAll
+    , pureLogPrintAll
+    , pureLogDebug
+    , pureLogPrintDebug
+    , pureLogInfo
+    , pureLogPrintInfo
+    , pureLogWarning
+    , pureLogPrintWarning
+    , pureLogError
+    , pureLogPrintError
     , finalizeAllLoggers
     , finalizeLogger
     , flushLoggers
     ) where
 
 import           Control.Applicative        ((<|>))
-import           Control.Monad              (when)
+import           Control.Monad              (join, when)
+import           Control.Monad.IO.Class     (liftIO)
 import qualified Data.ByteString.Char8      as S8
 import           Data.IORef
 import           Data.List                  (find)
@@ -31,13 +42,13 @@ import qualified Data.Map.Strict            as M
 import qualified Data.Text                  as T
 import           Language.Haskell.TH.Syntax as TH
 import           System.IO
+import           System.IO.Unsafe           (unsafePerformIO)
 
 import           EasyLogger.Date
-import           EasyLogger.LoggerSet
 import           EasyLogger.LogStr
+import           EasyLogger.LoggerSet
 import           EasyLogger.Push
 
-import           System.IO.Unsafe           (unsafePerformIO)
 
 -- | Add a @LoggerSet@ to the known loggers.
 setLoggerSet :: String -> LoggerSet -> IO ()
@@ -144,7 +155,7 @@ data LogLevel
   | LogInfo
   | LogWarning
   | LogError
-  deriving (Show, Eq, Ord)
+  deriving (Show, Read, Bounded, Enum, Eq, Ord)
 
 -- | Log level text. Make sure you call @initLogger@, or logging will be disabled.
 logLevelText :: LogLevel -> T.Text
@@ -161,7 +172,7 @@ logFun _ LogNone _ = return ()
 logFun loc@(Loc _ pkg _ _ _) level msg = do
   minLevel <- readIORef minLogLevel
   when (level >= minLevel) $ do
-    now <- readIORef cachedTime >>= \ch -> ch
+    now <- join (readIORef cachedTime)
     readIORef loggerSets >>= \sets ->
       case getLogger sets of
         -- Nothing | M.null sets -> error "You must call `initLogger` at the start of your application! See the documentation of `EasyLogger.Logger`."
@@ -176,7 +187,6 @@ cachedTime = unsafePerformIO $ do
   cache <- newTimeCache simpleTimeFormat'
   newIORef cache
 
-
 minLogLevel :: IORef LogLevel
 minLogLevel = unsafePerformIO $ newIORef LogAll
 {-# NOINLINE minLogLevel  #-}
@@ -186,61 +196,137 @@ minLogLevel = unsafePerformIO $ newIORef LogAll
 setMinLogLevel :: LogLevel -> IO ()
 setMinLogLevel = writeIORef minLogLevel
 
+------------------------------ All ------------------------------
 
 -- | Generates a function that takes a 'Text' and logs a 'LevelAll' message. Usage:
 --
 -- > $(logAll) "This is a debug log message"
 logAll :: Q Exp
-logAll = [| logFun $(qLocation >>= liftLoc) LogAll |]
+logAll = [| liftIO . logFun $(qLocation >>= liftLoc) LogAll |]
+
+-- | Same as `logAll`, but for pure code. Uses @unsafePerformIO@.
+--
+-- > $(pureLogAll) "This is a debug log message" (3 * 3)
+pureLogAll :: Q Exp
+pureLogAll = [| \txt a -> unsafePerformIO (logFun $(qLocation >>= liftLoc) LogAll txt >> return a) |]
+
 
 -- | Same as `logAll`, but also prints the message on `stdout`.
 logPrintAll :: Q Exp
-logPrintAll = [| \txt -> hPutStrLn stdout ("DEBUG: " ++ T.unpack txt) >> hFlush stdout >> logFun $(qLocation >>= liftLoc) LogAll txt |]
+logPrintAll = [| \txt -> liftIO (hPutStrLn stdout ("DEBUG: " ++ T.unpack txt) >> hFlush stdout >> logFun $(qLocation >>= liftLoc) LogAll txt) |]
 
+-- | Same as `pureLogAll`, but also prints the message on `stdout`.
+--
+-- > $(pureLogPrintAll) "This is a debug log message" (3 * 3)
+pureLogPrintAll :: Q Exp
+pureLogPrintAll = [| \txt a -> unsafePerformIO (hPutStrLn stdout ("DEBUG: " ++ T.unpack txt) >> hFlush stdout >> logFun $(qLocation >>= liftLoc) LogAll txt >> return a) |]
+
+
+------------------------------ Debug ------------------------------
 
 -- | Generates a function that takes a 'Text' and logs a 'LevelDebug' message. Usage:
 --
 -- > $(logDebug) "This is a debug log message"
 logDebug :: Q Exp
-logDebug = [| logFun $(qLocation >>= liftLoc) LogDebug |]
+logDebug = [| liftIO . logFun $(qLocation >>= liftLoc) LogDebug |]
+
+-- | Same as `logDebug`, but for pure code. Uses @unsafePerformIO@
+--
+-- > $(pureLogDebug) "This is a debug log message" defaultValue
+pureLogDebug :: Q Exp
+pureLogDebug = [| \txt a -> unsafePerformIO (logFun $(qLocation >>= liftLoc) LogDebug txt >> return a) |]
+
 
 -- | Same as `logDebug`, but also prints the message on `stdout`.
 logPrintDebug :: Q Exp
 logPrintDebug = [| \txt -> hPutStrLn stdout ("DEBUG: " ++ T.unpack txt) >> hFlush stdout >> logFun $(qLocation >>= liftLoc) LogDebug txt |]
 
+-- | Same as `pureLogDebug`, but also prints the message on `stdout`.
+--
+-- > $(purePrintLogDebug) "This is a debug log message" defaultValue
+pureLogPrintDebug :: Q Exp
+pureLogPrintDebug = [| \txt a -> unsafePerformIO (hPutStrLn stdout ("DEBUG: " ++ T.unpack txt) >> hFlush stdout >> logFun $(qLocation >>= liftLoc) LogDebug txt >> return a) |]
+
+
+------------------------------ Info ------------------------------
 
 -- | Generates a function that takes a 'Text' and logs a 'LevelInfo' message. Usage:
 --
 -- > $(logInfo) "This is a info log message"
 logInfo :: Q Exp
-logInfo = [| logFun $(qLocation >>= liftLoc) LogInfo |]
+logInfo = [| liftIO . logFun $(qLocation >>= liftLoc) LogInfo |]
+
+-- | Same as `logInfo`, but for pure code. Uses @unsafePerformIO@.
+--
+-- > $(pureLogInfo) "This is a warning log message" (funcX 10)
+pureLogInfo :: Q Exp
+pureLogInfo = [| \txt a -> unsafePerformIO (logFun $(qLocation >>= liftLoc) LogInfo txt >> return a) |]
+
 
 -- | Same as `logInfo`, but also prints the message on `stdout`.
 logPrintInfo :: Q Exp
-logPrintInfo = [| \txt -> hPutStrLn stdout ("INFO: " ++ T.unpack txt) >> hFlush stdout >> logFun $(qLocation >>= liftLoc) LogInfo txt |]
+logPrintInfo = [| \txt -> liftIO (hPutStrLn stdout ("INFO: " ++ T.unpack txt) >> hFlush stdout >> logFun $(qLocation >>= liftLoc) LogInfo txt) |]
 
+-- | Same as `pureLogInfo`, but also prints the message on `stdout`.
+--
+-- > $(pureLogPrintInfo) "This is a warning log message" (funcX 10)
+pureLogPrintInfo :: Q Exp
+pureLogPrintInfo = [| \txt a -> unsafePerformIO (hPutStrLn stdout ("INFO: " ++ T.unpack txt) >> hFlush stdout >> logFun $(qLocation >>= liftLoc) LogInfo txt >> return a) |]
+
+
+------------------------------ Warning ------------------------------
 
 -- | Generates a function that takes a 'Text' and logs a 'LevelWarning' message. Usage:
 --
 -- > $(logWarning) "This is a warning log message"
 logWarning :: Q Exp
-logWarning = [| logFun $(qLocation >>= liftLoc) LogWarning |]
+logWarning = [| liftIO . logFun $(qLocation >>= liftLoc) LogWarning |]
+
+-- | Same as `logWarning`, but for pure code. Uses @unsafePerformIO@.
+--
+-- > $(pureLogWarning) "This is a warning log message" "myresult"
+pureLogWarning :: Q Exp
+pureLogWarning = [| \txt a -> unsafePerformIO (logFun $(qLocation >>= liftLoc) LogWarning txt >> return a) |]
 
 
 -- | Same as `logWarning`, but also prints the message on `stdout`.
 logPrintWarning :: Q Exp
-logPrintWarning = [| \txt -> hPutStrLn stdout ("WARNING: " ++ T.unpack txt) >> hFlush stdout >> logFun $(qLocation >>= liftLoc) LogWarning txt |]
+logPrintWarning = [| \txt -> liftIO (hPutStrLn stdout ("WARNING: " ++ T.unpack txt) >> hFlush stdout >> logFun $(qLocation >>= liftLoc) LogWarning txt) |]
 
+
+-- | Same as `pureLogWarning`, but also prints the warning.
+--
+-- > $(pureLogPrintWarning) "This is a error log message" (4 + 4)
+pureLogPrintWarning :: Q Exp
+pureLogPrintWarning = [| \txt a -> unsafePerformIO (hPutStrLn stdout ("WARNING: " ++ T.unpack txt) >> hFlush stdout >> logFun $(qLocation >>= liftLoc) LogWarning txt >> return a)  |]
+
+
+------------------------------ Error ------------------------------
 
 -- | Generates a function that takes a 'Text' and logs a 'LevelError' message. Usage:
 --
 -- > $(logError) "This is a error log message"
 logError :: Q Exp
-logError = [| logFun $(qLocation >>= liftLoc) LogError |]
+logError = [| liftIO . logFun $(qLocation >>= liftLoc) LogError |]
+
+
+-- | Same as `logError`, but for pure code. Uses @unsafePerformIO@.
+--
+-- > $(pureLogError) "This is a error log message" (4 + 4)
+pureLogError :: Q Exp
+pureLogError = [| \txt a -> unsafePerformIO (logFun $(qLocation >>= liftLoc) LogError txt >> return a) |]
+
 
 -- | Same as `logError`, but also prints the message on `stderr`.
 logPrintError :: Q Exp
-logPrintError = [| \txt -> hPutStrLn stderr ("ERROR: " ++ T.unpack txt) >> hFlush stderr >> logFun $(qLocation >>= liftLoc) LogError txt |]
+logPrintError = [| \txt -> liftIO (hPutStrLn stderr ("ERROR: " ++ T.unpack txt) >> hFlush stderr >> logFun $(qLocation >>= liftLoc) LogError txt) |]
+
+
+-- | Same as `pureLogError`, but also prints the message on `stderr`.
+--
+-- > $(pureLogPrintError) "This is a error log message" (4 + 4)
+pureLogPrintError :: Q Exp
+pureLogPrintError = [| \txt a -> unsafePerformIO (hPutStrLn stderr ("ERROR: " ++ T.unpack txt) >> hFlush stderr >> logFun $(qLocation >>= liftLoc) LogError txt >> return a) |]
 
 
 ---- Helpers:
@@ -251,10 +337,10 @@ defaultLogStr :: Loc
               -> LogStr
               -> LogStr
 defaultLogStr loc time level msg =
-  "[" <> (toLogStr $ logLevelText level) <> ("#" <> toLogStr time) <> "] " <> (mkTrailWs msg) <> " @(" <> toLogStr (S8.pack fileLocStr) <> ")\n"
+  "[" <> toLogStr (logLevelText level) <> ("#" <> toLogStr time) <> "] " <> mkTrailWs msg <> " @(" <> toLogStr (S8.pack fileLocStr) <> ")\n"
   where
     mkTrailWs = mkMinLogStrLen defaultMinLogMsgLen
-    fileLocStr = (loc_package loc) ++ ':' : (loc_module loc) ++ ' ' : (loc_filename loc) ++ ':' : (line loc) ++ ':' : (char loc) ++ '-' : (lineEnd loc) ++ ':' : (charEnd loc)
+    fileLocStr = loc_package loc ++ ':' : loc_module loc ++ ' ' : loc_filename loc ++ ':' : line loc ++ ':' : char loc ++ '-' : lineEnd loc ++ ':' : charEnd loc
     line = show . fst . loc_start
     char = show . snd . loc_start
     lineEnd = show . fst . loc_end
