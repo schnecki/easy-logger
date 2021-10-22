@@ -48,7 +48,10 @@ import           EasyLogger.Date
 import           EasyLogger.LogStr
 import           EasyLogger.LoggerSet
 import           EasyLogger.Push
+import           EasyLogger.Util            (liftLoc)
 
+
+import           Debug.Trace
 
 -- | Add a @LoggerSet@ to the known loggers.
 setLoggerSet :: String -> LoggerSet -> IO ()
@@ -142,6 +145,10 @@ setLoggingDestinationAllPkgs ls pkgName LogFile{} = newFileLoggerSetSameFile def
 defaultLogPkgName :: String
 defaultLogPkgName = "__default__"
 
+mainLogPkgName :: String
+mainLogPkgName = "main"
+
+
 -- | The default buffer size (4,096 bytes).
 defaultBufSize :: BufSize
 defaultBufSize = 4096
@@ -175,8 +182,9 @@ logFun loc@(Loc _ pkg _ _ _) level msg = do
     now <- join (readIORef cachedTime)
     readIORef loggerSets >>= \sets ->
       case getLogger sets of
-        -- Nothing | M.null sets -> error "You must call `initLogger` at the start of your application! See the documentation of `EasyLogger.Logger`."
-        Nothing  -> return ()
+        Nothing -- Check the package name of the caller, as otherwise any library logging would halt the process.
+          | M.null sets && pkg == mainLogPkgName -> error "You must call `initLogger` at the start of your application! See the documentation of `EasyLogger.Logger`."
+        Nothing -> return ()
         Just set -> pushLogStr set (defaultLogStr loc now level (toLogStr msg))
   where
     getLogger sets = M.lookup pkg sets <|> M.lookup defaultLogPkgName sets
@@ -349,15 +357,5 @@ defaultLogStr loc time level msg =
 
 defaultMinLogMsgLen :: Int
 defaultMinLogMsgLen = 60
-
-
-liftLoc :: Loc -> Q Exp
-liftLoc (Loc a b c (d1, d2) (e1, e2)) = [|Loc
-    $(TH.lift a)
-    $(TH.lift b)
-    $(TH.lift c)
-    ($(TH.lift d1), $(TH.lift d2))
-    ($(TH.lift e1), $(TH.lift e2))
-    |]
 
 

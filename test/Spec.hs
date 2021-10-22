@@ -66,3 +66,4 @@ main = hspec $ do
   describe "initialization" $ do
     it "throws an exception if not initialized" $
       prop_NoInit `shouldThrow` anyException
+
