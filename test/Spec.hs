@@ -6,7 +6,7 @@ module Main where
 -- imports
 
 import qualified Data.Text                  as T
-import           Logging
+import           EasyLogger
 import           Test.QuickCheck
 
 -- file Spec.hs

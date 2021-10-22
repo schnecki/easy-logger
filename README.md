@@ -18,7 +18,7 @@ Initialise the logger for your package and start logging:
       # At the end of your program, flush the buffers:
       finalizeAllLoggers
 
-You can also include the logs of the libraries that you use and which use the @easy-logger@ package
+You can also include the logs of the libraries that you use and which use the `easy-logger` package
 for logging. If the library maintainer is nice, (s)he allows you to turn on/off logging for that
 library only. See the Library section below how to do it. To turn logging for all packages
 (that use easy-logger) on, do this:
