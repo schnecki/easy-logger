@@ -1,5 +1,5 @@
 name:                easy-logger
-version:             0.1.0.2
+version:             0.1.0.4
 github:              "schnecki/easy-logger"
 license:             BSD3
 author:              "Manuel Schneckenreither"
@@ -47,3 +47,4 @@ tests:
     - QuickCheck
     - quickcheck-assertions
     - hspec
+    - directory

@@ -7,6 +7,7 @@ module Main where
 
 import qualified Data.Text                  as T
 import           EasyLogger
+import           System.Directory
 import           Test.QuickCheck
 
 -- file Spec.hs
@@ -59,11 +60,13 @@ return []
 
 
 main :: IO ()
-main = hspec $ do
-  describe "prop_Logging" $ do
-    it "logs to file and reads content" $ prop_Logging
+main = do
+  createDirectoryIfMissing True "test/files"
+  hspec $ do
+    describe "prop_Logging" $ do
+      it "logs to file and reads content" $ prop_Logging
 
-  describe "initialization" $ do
-    it "throws an exception if not initialized" $
-      prop_NoInit `shouldThrow` anyException
+    describe "initialization" $ do
+      it "throws an exception if not initialized" $
+        prop_NoInit `shouldThrow` anyException
 
