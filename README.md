@@ -8,7 +8,8 @@ for pure code.
 
 Initialise the logger for your package and start logging:
 
-    import qualified Data.Text                          as T
+    import           EasyLogger
+    import qualified Data.Text  as T
 
     main :: IO ()
     main = do
@@ -18,11 +19,17 @@ Initialise the logger for your package and start logging:
       # At the end of your program, flush the buffers:
       finalizeAllLoggers
 
+The log output looks like this:
+
+    $ cat package.log
+    [INFO #22-Oct-2021 12:27:23] Starting App                           @(main:Main
+
 You can also include the logs of the libraries that you use and which use the `easy-logger` package
 for logging. If the library maintainer is nice, (s)he allows you to turn on/off logging for that
 library only. See the Library section below how to do it. To turn logging for all packages
 (that use easy-logger) on, do this:
 
+    import           EasyLogger
     import qualified Data.Text                          as T
 
     main :: IO ()
@@ -47,7 +54,8 @@ Under the hood `pureLogPrintError` uses `unsafePerformIO` to log. The return val
 
 The available log levels are:
 
-    -- | Log Level. Levels are sorted. `All` < `Debug` < `Info` < `Warning` < `Error`. None disables all logging. Default: All
+    -- | Log Level. Levels are sorted. `All` < `Debug` < `Info` < `Warning` < `Error`.
+    --   None disables all logging. Default: All
     data LogLevel
       = LogNone
       | LogAll
