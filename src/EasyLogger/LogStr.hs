@@ -1,10 +1,10 @@
-{-# LANGUAGE FlexibleInstances    #-}
-{-# LANGUAGE OverloadedStrings    #-}
-{-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE OverloadedStrings #-}
 module EasyLogger.LogStr
     ( LogStr (..)
     , ToLogStr (..)
     , logStrLen
+    , fromLogStr
     , mkMinLogStrLen
     ) where
 

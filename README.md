@@ -8,6 +8,7 @@ for pure code.
 
 Initialise the logger for your package and start logging:
 
+    {-# LANGUAGE TemplateHaskell     #-}
     import           EasyLogger
     import qualified Data.Text  as T
 
@@ -24,11 +25,44 @@ The log output looks like this:
     $ cat package.log
     [INFO #22-Oct-2021 12:27:23] Starting App                           @(main:Main
 
-You can also include the logs of the libraries that you use and which use the `easy-logger` package
-for logging. If the library maintainer is nice, (s)he allows you to turn on/off logging for that
-library only. See the Library section below how to do it. To turn logging for all packages
-(that use easy-logger) on, do this:
 
+If you use libraries, **including your own package library**, to log from a file outside of
+`Main.hs` you need to make the library package name available and enable the logging specifically. For this create following file:
+
+    {-# LANGUAGE TemplateHaskell #-}
+    module MyPackage.Logging
+        ( enableMyPackageLogging
+        , disableMyPackageLogging
+        ) where
+
+    import           EasyLogger
+
+    enableMyPackageLogging :: LogDestination -> LogLevel -> IO ()
+    enableMyPackageLogging = $(initLogger)
+
+    disableMyPackageLogging :: IO ()
+    disableMyPackageLogging = $(finalizeLogger)
+
+and then enable it:
+
+    {-# LANGUAGE TemplateHaskell     #-}
+    import           EasyLogger
+    import           MyPackage.Logging
+    import qualified Data.Text  as T
+
+    main :: IO ()
+    main = do
+      $(initLogger) (LogFile "package.log") LogDebug
+      enableMyPackageLogging (LogFile "package.log") LogDebug
+      ...
+      # At the end of your program, flush the buffers:
+      finalizeAllLoggers
+
+
+You can also include the logs of all the libraries that you use and which use the `easy-logger`
+package for logging:
+
+    {-# LANGUAGE TemplateHaskell     #-}
     import           EasyLogger
     import qualified Data.Text                          as T
 
@@ -76,8 +110,9 @@ The logger can be used to log to `stderr`, `stdout` or a file:
 
 ## Library
 
-If you are exposing a library, let your user turn on/off the logging for your library. The
-Template-Haskell code ensures that your package name is provided to the logger, and thus logging for this module only is turned on/off.
+If you are exposing a library (including your own library), let your user turn on/off the logging
+for your library. The Template-Haskell code ensures that your package name is provided to the
+logger, and thus logging for this module only is turned on/off.
 
 
     {-# LANGUAGE TemplateHaskell #-}
