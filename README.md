@@ -14,7 +14,7 @@ Initialise the logger for your package and start logging:
 
     main :: IO ()
     main = do
-      $(initLogger) (LogFile "package.log") LogDebug
+      $(initLogger) (LogFile "package.log")
       $(logInfo) ("Starting App" :: T.Text)
       ...
       # At the end of your program, flush the buffers:
@@ -37,7 +37,7 @@ If you use libraries, **including your own package library**, to log from a file
 
     import           EasyLogger
 
-    enableMyPackageLogging :: LogDestination -> LogLevel -> IO ()
+    enableMyPackageLogging :: LogDestination -> IO ()
     enableMyPackageLogging = $(initLogger)
 
     disableMyPackageLogging :: IO ()
@@ -52,8 +52,8 @@ and then enable it:
 
     main :: IO ()
     main = do
-      $(initLogger) (LogFile "package.log") LogDebug
-      enableMyPackageLogging (LogFile "package.log") LogDebug
+      $(initLogger) (LogFile "package.log")
+      enableMyPackageLogging (LogFile "package.log")
       ...
       # At the end of your program, flush the buffers:
       finalizeAllLoggers
@@ -68,7 +68,7 @@ package for logging:
 
     main :: IO ()
     main = do
-      $(initLoggerAllPackages) (LogFile "package.log") LogAll True
+      $(initLoggerAllPackages) (LogFile "package.log") True
       $(logInfo) ("Starting App" :: T.Text)
       ...
       # At the end of your program, flush the buffers:
@@ -123,7 +123,7 @@ logger, and thus logging for this module only is turned on/off.
 
     import           EasyLogger
 
-    enableMyGreatPackageLogging :: LogDestination -> LogLevel -> IO ()
+    enableMyGreatPackageLogging :: LogDestination -> IO ()
     enableMyGreatPackageLogging = $(initLogger)
 
     disableMyGreatPackageLogging :: IO ()
