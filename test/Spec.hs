@@ -33,7 +33,7 @@ getLogMessages fp = do
 prop_Logging :: Property
 prop_Logging = ioProperty $ do
   writeFile "test/files/prop_Logging.log" ""
-  $(initLogger) (LogFile ("test/files/prop_Logging.log" :: FilePath)) LogAll
+  $(initLogger) (LogFile ("test/files/prop_Logging.log" :: FilePath))
   $(logDebug) "test run"
   finalizeAllLoggers
   lastLog <- getLogMessages "test/files/prop_Logging.log"
