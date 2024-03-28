@@ -13,8 +13,8 @@ import           Data.IORef
 import           Foreign.Marshal.Alloc (allocaBytes)
 import           GHC.IO.FD
 
-import           EasyLogger.LoggerSet
 import           EasyLogger.LogStr
+import           EasyLogger.LoggerSet
 
 
 -- | Writing a log message to the corresponding buffer.
@@ -57,3 +57,5 @@ pushLog fdref logger@(Logger size mbuf ref) nlogmsg@(LogStr nlen nbuilder)
     checkBuf ologmsg@(LogStr olen _)
       | size < olen + nlen = (nlogmsg, Just ologmsg)
       | otherwise          = (ologmsg <> nlogmsg, Nothing)
+
+

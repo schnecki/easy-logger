@@ -7,6 +7,7 @@ module EasyLogger.Logger
     , initLoggerAllPackages
     , setLoggingDestination
     , setMinLogLevel
+    , getMinLogLevel
     , setPrintLocationToConsole
     , logAll
     , logPrintAll
@@ -186,7 +187,7 @@ data LogLevel
 -- | Log level text. Make sure you call @initLogger@, or logging will be disabled.
 logLevelText :: LogLevel -> T.Text
 logLevelText LogNone    = mempty
-logLevelText LogAll     = "ALL"
+logLevelText LogAll     = "ALL  "
 logLevelText LogDebug   = "DEBUG"
 logLevelText LogInfo    = "INFO "
 logLevelText LogWarning = "WARN "
@@ -197,7 +198,7 @@ logFun :: (ToLogStr msg) => Bool -> Loc -> LogLevel -> msg -> IO ()
 logFun _ _ LogNone _ = return ()
 logFun printMsg loc@(Loc _ pkg _ _ _) level msg = do
   (minLevel, printLoc) <- readIORef minLogLevel
-  when (level >= minLevel) $ do
+  when (minLevel /= LogNone && level >= minLevel) $ do
     now <- join (readIORef cachedTime)
     readIORef loggerSets >>= \sets ->
       case getLogger sets of
@@ -216,11 +217,12 @@ logFun printMsg loc@(Loc _ pkg _ _ _) level msg = do
       LogError -> stderr
       _        -> stdout
 
-
+-- | This is efectively `id`. Used for the type inference only.
 mkTxt :: T.Text -> T.Text
 mkTxt = id
+{-# INLINE mkTxt #-}
 
-
+-- | Used for performance only.
 cachedTime :: IORef (IO FormattedTime)
 cachedTime = unsafePerformIO $ do
   cache <- newTimeCache simpleTimeFormat'
@@ -236,8 +238,12 @@ minLogLevel = unsafePerformIO $ newIORef (LogAll, False)
 setMinLogLevel :: LogLevel -> IO ()
 setMinLogLevel x = modifyIORef minLogLevel (\(_, b) -> (x, b))
 
--- | Set the least logging level. Levels lower will not be logged. Log Level Order: `Debug` < `Info` < `Warning` < `Error`. `None` disables all logging. Note that the output to stderr using e.g. `logPrintError` will not
--- be affected!
+-- | Get the current log level
+getMinLogLevel :: IO LogLevel
+getMinLogLevel = fst <$> readIORef minLogLevel
+
+
+-- | Set if the location should be printed or not.
 setPrintLocationToConsole :: Bool -> IO ()
 setPrintLocationToConsole x = modifyIORef minLogLevel (\(l, _) -> (l, x))
 
@@ -247,6 +253,7 @@ setPrintLocationToConsole x = modifyIORef minLogLevel (\(l, _) -> (l, x))
 -- | Generates a function that takes a 'Text' and logs a 'LevelAll' message. Usage:
 --
 -- > $(logAll) ("This is a debug log message" :: T.Text)
+--
 logAll :: Q Exp
 logAll = [| liftIO . logFun False $(qLocation >>= liftLoc) LogAll |]
 
@@ -495,5 +502,3 @@ defaultLogStr prLoc loc time level msg =
 
 defaultMinLogMsgLen :: Int
 defaultMinLogMsgLen = 60
-
-

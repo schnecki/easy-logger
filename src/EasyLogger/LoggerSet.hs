@@ -18,8 +18,7 @@ module EasyLogger.LoggerSet
 
 import           Control.Concurrent            (getNumCapabilities)
 import           Control.Concurrent.MVar
-import           Control.Debounce              (debounceAction, defaultDebounceSettings,
-                                                mkDebounce)
+import           Control.Debounce              (debounceAction, defaultDebounceSettings, mkDebounce)
 import           Control.Monad                 (replicateM, when)
 import           Data.Array                    (Array, bounds, listArray, (!))
 import           Data.ByteString.Builder
@@ -33,8 +32,7 @@ import           Foreign.ForeignPtr            (withForeignPtr)
 import           Foreign.Marshal.Alloc         (free, mallocBytes)
 import           Foreign.Ptr                   (Ptr, plusPtr)
 import           GHC.IO.Device                 (close)
-import           GHC.IO.FD                     (FD, openFile, stderr, stdout,
-                                                writeRawBufferPtr)
+import           GHC.IO.FD                     (FD, openFile, stderr, stdout, writeRawBufferPtr)
 import           GHC.IO.IOMode                 (IOMode (..))
 
 import           EasyLogger.LogStr
