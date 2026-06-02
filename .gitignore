@@ -3,4 +3,5 @@
 /easy-logger.cabal
 /TAGS
 /stack.yaml.lock
-/test/files/*
+/test/files/*.stack-work*
+.stack-work*

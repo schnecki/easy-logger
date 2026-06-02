@@ -67,8 +67,8 @@ import           System.IO
 import           System.IO.Unsafe           (unsafePerformIO)
 
 import           EasyLogger.Date
-import           EasyLogger.LogStr
 import           EasyLogger.LoggerSet
+import           EasyLogger.LogStr
 import           EasyLogger.Push
 import           EasyLogger.Util            (liftLoc)
 
@@ -111,14 +111,8 @@ closeLoggerPkg :: String -> IO ()
 closeLoggerPkg pkgName = do
   refs <- readIORef loggerSets
   case M.lookup pkgName refs of
-    Nothing -> return ()
-    Just set@(LoggerSet Nothing _ _ _) -> deletePackage pkgName >> rmLoggerSet set
-    Just set@(LoggerSet justFp _ _ _) -> do
-      deletePackage pkgName
-      let nrFD = length $ filter (\(LoggerSet mFp _ _ _) -> mFp == justFp) (M.elems refs)
-      if nrFD <= 1
-        then rmLoggerSet set
-        else flushLoggerSet set
+    Nothing  -> return ()
+    Just set -> flushLoggerSet set >> deletePackage pkgName >> rmLoggerSet set
 
 -- | Delete a package from the logger sets and with this disable all logging. Ensure the LoggerSet is deleted in case this is the last FD before calling this function!
 deletePackage :: String -> IO ()
